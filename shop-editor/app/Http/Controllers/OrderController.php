@@ -79,9 +79,6 @@ class OrderController extends Controller
 
     public function placeOrder(Request $request)
     {
-        // 1. TẠM ẨN DÒNG NÀY ĐỂ CODE CHẠY TIẾP
-        // dd($request->all()); 
-
         // Validate dữ liệu
         $request->validate([
             'customer_name' => 'required',
@@ -91,9 +88,8 @@ class OrderController extends Controller
 
         $cart = session()->get('cart');
 
-        // Debug 1: Kiểm tra xem giỏ hàng có dữ liệu không
         if (!$cart) {
-            dd("Giỏ hàng đang trống! Session cart không có dữ liệu.");
+            return redirect()->route('home')->with('error', 'Giỏ hàng trống!');
         }
 
         DB::beginTransaction();
@@ -103,13 +99,10 @@ class OrderController extends Controller
                 $totalAmount += $item['price'] * $item['quantity'];
             }
 
-            // Debug 2: Kiểm tra User ID (Rất quan trọng)
-            // Nếu Auth::id() null và User ID 1 không tồn tại trong DB, code sẽ lỗi ngay tại đây.
             $userId = Auth::id() ?? 1;
 
-            // Kiểm tra xem User ID 1 có tồn tại không (nếu là khách vãng lai)
+            // Kiểm tra user tồn tại
             if (!\App\Models\User::find($userId)) {
-                // Nếu chưa có user nào, tạo tạm user ảo để test
                 $newUser = \App\Models\User::create([
                     'name' => 'Guest',
                     'email' => 'guest' . time() . '@test.com',
@@ -128,16 +121,12 @@ class OrderController extends Controller
                 'note' => $request->note,
                 'total_amount' => $totalAmount,
                 'payment_method' => $request->payment_method ?? 'COD',
+                'payment_status' => 'unpaid',
                 'status' => 'pending'
             ]);
 
             // Tạo Order Items
             foreach ($cart as $key => $item) {
-                // Debug 3: Kiểm tra từng item xem có đủ key không
-                if (!isset($item['design_id']) || !isset($item['cost'])) {
-                    // dd("Lỗi dữ liệu Item tại key: $key. Thiếu design_id hoặc cost", $item);
-                }
-
                 OrderItem::create([
                     'order_id' => $order->id,
                     'saved_design_id' => $item['design_id'],
@@ -152,17 +141,16 @@ class OrderController extends Controller
             DB::commit();
             session()->forget('cart');
 
-            // === THÀNH CÔNG ===
-            // Thay vì redirect, ta dùng dd() để xem kết quả Order vừa tạo
-            // dd("ĐÃ THÊM THÀNH CÔNG! Check Database bảng Orders ID: " . $order->id, $order->load('items'));
+            // Nếu chọn Banking thì chuyển sang trang QR
+            if ($request->payment_method === 'Banking') {
+                return redirect()->route('payment.qr', $order->id);
+            }
 
             return redirect()->route('orders.index')->with('success', 'Đặt hàng thành công! Mã đơn: #' . $order->id);
 
         } catch (\Exception $e) {
             DB::rollBack();
-            // === CÓ LỖI ===
-            // Hiển thị chi tiết lỗi để sửa
-            // dd("CÓ LỖI XẢY RA (Transaction Rolled Back): " . $e->getMessage() . " - Tại dòng: " . $e->getLine());
+            return back()->with('error', 'Có lỗi xảy ra: ' . $e->getMessage());
         }
     }
 
@@ -239,5 +227,43 @@ class OrderController extends Controller
 
         // 3. Nếu đơn đã xử lý rồi thì báo lỗi
         return back()->with('error', 'Không thể hủy đơn hàng này do đã được xử lý hoặc đang vận chuyển.');
+    }
+
+    // Hiển thị trang QR thanh toán
+    public function showQR($orderId)
+    {
+        $order = Order::with('items')->findOrFail($orderId);
+
+        // Kiểm tra quyền
+        if (Auth::check() && $order->user_id !== Auth::id()) {
+            abort(403, 'Bạn không có quyền xem đơn hàng này.');
+        }
+
+        // Thông tin ngân hàng KIENLONGBANK
+        $bankInfo = [
+            'bank_id' => 'KIENLONGBANK', // Mã ngân hàng
+            'account_no' => '97102004',
+            'account_name' => 'VO BAO NGOC',
+            'amount' => $order->total_amount,
+            'description' => 'DH' . $order->id, // Nội dung chuyển khoản
+        ];
+
+        return view('cart.payment-qr', compact('order', 'bankInfo'));
+    }
+
+    // Xác nhận đã thanh toán
+    public function confirmPayment($orderId)
+    {
+        $order = Order::findOrFail($orderId);
+
+        if (Auth::check() && $order->user_id !== Auth::id()) {
+            abort(403);
+        }
+
+        $order->payment_status = 'paid';
+        $order->status = 'confirmed';
+        $order->save();
+
+        return redirect()->route('orders.index')->with('success', 'Cảm ơn bạn đã thanh toán! Đơn hàng #' . $order->id . ' đang được xử lý.');
     }
 }

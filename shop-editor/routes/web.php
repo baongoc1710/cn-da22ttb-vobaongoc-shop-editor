@@ -36,6 +36,10 @@ Route::get('/my-orders/{id}', [OrderController::class, 'show'])->name('orders.sh
 // Route Hủy đơn hàng
 Route::post('/my-orders/{id}/cancel', [OrderController::class, 'cancel'])->name('orders.cancel');
 
+// Payment QR Routes
+Route::get('/payment/qr/{order}', [OrderController::class, 'showQR'])->name('payment.qr');
+Route::post('/payment/confirm/{order}', [OrderController::class, 'confirmPayment'])->name('payment.confirm');
+
 
 // AUTH ROUTES
 Route::get('/login', [AuthController::class, 'showLogin'])->name('login');

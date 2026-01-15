@@ -39,13 +39,53 @@ class ProductController extends Controller
         $request->validate([
             'name' => 'required|string|max:255',
             'base_price' => 'required|numeric',
-            'import_price' => 'required|numeric', // <--- Thêm validate
+            'import_price' => 'required|numeric',
+            // Validate cho màu đầu tiên (tùy chọn)
+            'first_color_name' => 'nullable|string',
+            'first_hex_code' => 'nullable|string',
+            'first_image_front' => 'nullable|image|max:2048',
+            'first_image_back' => 'nullable|image|max:2048',
         ]);
 
         $data = $request->all();
-        $data['slug'] = Str::slug($request->name);
+        
+        // Tạo slug unique (tự động thêm số nếu trùng)
+        $slug = Str::slug($request->name);
+        $originalSlug = $slug;
+        $counter = 1;
+        
+        while (Product::where('slug', $slug)->exists()) {
+            $slug = $originalSlug . '-' . $counter;
+            $counter++;
+        }
+        
+        $data['slug'] = $slug;
 
-        Product::create($data);
+        // Tạo sản phẩm
+        $product = Product::create($data);
+
+        // Nếu có thông tin màu đầu tiên thì tạo luôn
+        if ($request->first_color_name && $request->hasFile('first_image_front')) {
+            $colorData = [
+                'product_id' => $product->id,
+                'color_name' => $request->first_color_name,
+                'hex_code' => $request->first_hex_code ?? '#ffffff',
+            ];
+
+            // Upload ảnh mặt trước
+            if ($request->hasFile('first_image_front')) {
+                $path = $request->file('first_image_front')->store('products/colors', 'public');
+                $colorData['image_front'] = 'storage/' . $path;
+            }
+
+            // Upload ảnh mặt sau (nếu có)
+            if ($request->hasFile('first_image_back')) {
+                $path = $request->file('first_image_back')->store('products/colors', 'public');
+                $colorData['image_back'] = 'storage/' . $path;
+            }
+
+            ProductColor::create($colorData);
+        }
 
         return redirect()->route('admin.products.index')->with('success', 'Thêm sản phẩm thành công!');
     }
@@ -58,14 +98,24 @@ class ProductController extends Controller
         $request->validate([
             'name' => 'required|string|max:255',
             'base_price' => 'required|numeric',
-            'import_price' => 'required|numeric', // <--- Thêm validate
+            'import_price' => 'required|numeric',
         ]);
+
+        // Tạo slug unique (bỏ qua sản phẩm hiện tại)
+        $slug = Str::slug($request->name);
+        $originalSlug = $slug;
+        $counter = 1;
+        
+        while (Product::where('slug', $slug)->where('id', '!=', $id)->exists()) {
+            $slug = $originalSlug . '-' . $counter;
+            $counter++;
+        }
 
         $product->update([
             'name' => $request->name,
-            'slug' => Str::slug($request->name),
+            'slug' => $slug,
             'base_price' => $request->base_price,
-            'import_price' => $request->import_price, // <--- Cập nhật giá nhập
+            'import_price' => $request->import_price,
             'description' => $request->description,
             'category' => $request->category,
         ]);
